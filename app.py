@@ -12,7 +12,6 @@ from flask_cors import CORS
 import torch
 import torchaudio
 
-torchaudio.set_audio_backend("sox_io")
 torchaudio.set_audio_backend("soundfile")
 
 ssl._create_default_https_context = ssl._create_unverified_context
