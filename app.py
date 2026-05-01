@@ -20,11 +20,14 @@ app = Flask(__name__)
 CORS(app)
 
 # Load Silero VAD
-model, utils = torch.hub.load(
-    'snakers4/silero-vad',
-    'silero_vad',
-    trust_repo=True
-)
+try:
+    model, utils = torch.hub.load(
+        'snakers4/silero-vad',
+        'silero_vad',
+        trust_repo=True
+    )
+except Exception as e:
+    print("MODEL LOAD ERROR:", e)
 (get_speech_timestamps,
  save_audio,
  read_audio,
