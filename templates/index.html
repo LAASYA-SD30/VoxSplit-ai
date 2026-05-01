@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoxSplit — Voice Activity Detection</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #05080f;
+  --s1:        #0b0f1a;
+  --s2:        #111827;
+  --s3:        #1a2235;
+  --border:    rgba(99,130,255,0.1);
+  --border-hi: rgba(99,130,255,0.22);
+  --accent:    #6382ff;
+  --accent2:   #a78bfa;
+  --gold:      #fbbf24;
+  --rose:      #f87171;
+  --teal:      #34d399;
+  --text:      rgba(255,255,255,0.9);
+  --mid:       rgba(255,255,255,0.45);
+  --low:       rgba(255,255,255,0.2);
+  --r:         10px;
+  --r-sm:      6px;
+  --mono:      'DM Mono', monospace;
+  --head:      'Bebas Neue', sans-serif;
+  --body:      'Outfit', sans-serif;
+}
+
+html { scroll-behavior: smooth; }
+body {
+  font-family: var(--body);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* subtle scan-line overlay */
+body::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 999;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px);
+}
+
+/* radial glow top */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(ellipse 70% 40% at 50% -5%, rgba(99,130,255,0.12) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 30% at 90% 80%, rgba(167,139,250,0.07) 0%, transparent 60%);
+}
+
+.page {
+  position: relative; z-index: 1;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 1.25rem 6rem;
+}
+
+/* ── NAV ── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border);
+  background: rgba(5,8,15,0.9);
+  backdrop-filter: blur(20px);
+  margin: 0 -1.25rem; padding-left: 1.25rem; padding-right: 1.25rem;
+}
+.logo {
+  font-family: var(--head);
+  font-size: 1.4rem;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  display: flex; align-items: center; gap: 8px;
+}
+.logo-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  animation: pulse 2.5s ease-in-out infinite;
+}
+.nav-tag {
+  font-family: var(--mono); font-size: 0.58rem;
+  color: var(--low); letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ── HERO ── */
+.hero { padding: 3rem 0 2rem; }
+.kicker {
+  font-family: var(--mono); font-size: 0.6rem;
+  text-transform: uppercase; letter-spacing: 0.2em;
+  color: var(--accent); margin-bottom: 1rem;
+  display: flex; align-items: center; gap: 8px;
+}
+.kicker::before {
+  content: ''; width: 16px; height: 1px;
+  background: var(--accent); opacity: 0.6;
+}
+h1 {
+  font-family: var(--head);
+  font-size: clamp(4rem, 14vw, 6.5rem);
+  font-weight: 400;
+  line-height: 0.92;
+  letter-spacing: 0.04em;
+  margin-bottom: 1.25rem;
+  text-transform: uppercase;
+}
+h1 .dim { color: var(--mid); display: block; }
+.hero-desc {
+  font-size: 0.88rem; color: var(--mid);
+  line-height: 1.9; max-width: 480px;
+  font-weight: 300; margin-bottom: 2rem;
+}
+.hero-desc b { color: var(--text); font-weight: 500; }
+
+/* monitor bar */
+.monitor {
+  background: var(--s1); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 10px 14px;
+  margin-bottom: 2rem;
+}
+.monitor-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+}
+.monitor-lbl { font-family: var(--mono); font-size: 0.55rem; color: var(--low); letter-spacing: 0.12em; text-transform: uppercase; }
+.monitor-live { font-family: var(--mono); font-size: 0.55rem; color: var(--rose); display: flex; align-items: center; gap: 4px; }
+.live-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--rose); animation: blink 1.4s ease-in-out infinite; }
+canvas#oscCanvas { display: block; width: 100%; height: 40px; }
+
+/* ── DIVIDER ── */
+.divider { height: 1px; background: var(--border); margin: 1.75rem 0; }
+
+/* ── SECTION ── */
+.sec-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 1rem;
+}
+.sec-num {
+  font-family: var(--mono); font-size: 0.55rem;
+  padding: 2px 7px; border-radius: 4px;
+  background: var(--s2); border: 1px solid var(--border);
+  color: var(--accent);
+}
+.sec-title {
+  font-family: var(--mono); font-size: 0.6rem;
+  text-transform: uppercase; letter-spacing: 0.14em; color: var(--low);
+}
+
+/* ── CARD ── */
+.card {
+  background: var(--s1); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 1.25rem; margin-bottom: 10px;
+}
+
+/* ── TABS ── */
+.tabs {
+  display: flex; gap: 2px; margin-bottom: 1.25rem;
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 3px; width: 100%;
+}
+.tab {
+  flex: 1; font-family: var(--mono); font-size: 0.64rem;
+  padding: 7px 10px; border-radius: 4px; border: none; cursor: pointer;
+  background: transparent; color: var(--low);
+  transition: all 0.18s; display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.tab.active { background: var(--s3); color: var(--text); border: 1px solid var(--border-hi); }
+.tab:hover:not(.active) { color: var(--mid); }
+.tab-dot { width: 5px; height: 5px; border-radius: 50%; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── UPLOAD ── */
+.drop-zone {
+  border: 1.5px dashed rgba(99,130,255,0.15); border-radius: var(--r);
+  padding: 2rem 1.25rem; text-align: center; cursor: pointer; position: relative;
+  transition: all 0.22s; background: rgba(99,130,255,0.02);
+}
+.drop-zone:hover, .drop-zone.over {
+  border-color: rgba(99,130,255,0.4); background: rgba(99,130,255,0.06);
+}
+.drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.drop-icon {
+  width: 44px; height: 44px; border-radius: 10px; margin: 0 auto 1rem;
+  background: var(--s2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+}
+.drop-icon svg { width: 20px; height: 20px; stroke: var(--accent); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.drop-main { font-size: 0.85rem; font-weight: 500; margin-bottom: 4px; }
+.drop-sub { font-size: 0.72rem; color: var(--low); }
+#file-chip {
+  display: none; align-items: center; gap: 5px; margin: 10px auto 0;
+  font-family: var(--mono); font-size: 0.62rem; color: var(--teal);
+  padding: 3px 10px; background: rgba(52,211,153,0.08);
+  border-radius: 4px; border: 1px solid rgba(52,211,153,0.15);
+  width: fit-content;
+}
+
+/* ── RECORDER ── */
+.rec-wrap { padding: 0.5rem 0; }
+.rec-center { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+.rec-ring { position: relative; display: flex; align-items: center; justify-content: center; }
+.rec-ring-anim {
+  position: absolute; width: 72px; height: 72px; border-radius: 50%;
+  border: 1.5px solid rgba(248,113,113,0.25); animation: none;
+}
+.rec-ring-anim.pulsing { animation: ring-out 1.5s ease-in-out infinite; }
+.rec-btn {
+  width: 54px; height: 54px; border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(248,113,113,0.08); border: 1.5px solid rgba(248,113,113,0.25);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s; position: relative; z-index: 1;
+}
+.rec-btn:hover { background: rgba(248,113,113,0.15); }
+.rec-btn.recording { background: rgba(248,113,113,0.2); border-color: var(--rose); }
+.rec-shape { width: 17px; height: 17px; border-radius: 50%; background: var(--rose); transition: all 0.22s; }
+.rec-btn.recording .rec-shape { border-radius: 3px; width: 14px; height: 14px; }
+.rec-info { text-align: center; }
+.rec-timer { font-family: var(--mono); font-size: 1.15rem; letter-spacing: 0.06em; }
+.rec-hint { font-family: var(--mono); font-size: 0.55rem; color: var(--low); text-transform: uppercase; letter-spacing: 0.12em; margin-top: 3px; }
+.rec-wave-box {
+  width: 100%; height: 48px; background: var(--s2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); overflow: hidden; margin-top: 0.5rem;
+}
+canvas#recCanvas { width: 100%; height: 100%; display: block; }
+.rec-btns { display: flex; gap: 6px; margin-top: 8px; justify-content: center; }
+
+/* ── PARAMS ── */
+.params { display: flex; flex-direction: column; gap: 1rem; margin-top: 1.25rem; }
+.param-block { background: var(--s2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 1rem; }
+.param-label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--mono); font-size: 0.62rem;
+  color: var(--mid); text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.param-val { color: var(--accent); font-size: 0.7rem; }
+.param-hint { font-size: 0.75rem; color: var(--low); margin-top: 8px; line-height: 1.6; font-weight: 300; }
+
+/* Advanced toggle */
+.adv-toggle {
+  display: flex; align-items: center; gap: 7px; margin-top: 1rem;
+  background: none; border: 1px dashed rgba(99,130,255,0.12); border-radius: var(--r-sm);
+  padding: 7px 12px; width: 100%; cursor: pointer; color: var(--low);
+  font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em;
+  transition: all 0.18s;
+}
+.adv-toggle:hover { border-color: rgba(99,130,255,0.28); color: var(--mid); }
+.adv-toggle .chevron { margin-left: auto; transition: transform 0.2s; font-size: 0.7rem; }
+.adv-toggle.open .chevron { transform: rotate(180deg); }
+.adv-body { display: none; }
+.adv-body.open { display: flex; flex-direction: column; gap: 1rem; margin-top: 0.75rem; }
+
+/* Heatmap legend */
+.hm-legend {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-family: var(--mono); font-size: 0.55rem; color: var(--low);
+}
+.hm-legend-bar {
+  height: 8px; flex: 1; max-width: 80px; border-radius: 3px;
+  background: linear-gradient(to right, rgba(99,130,255,0.15), rgba(99,130,255,0.9));
+}
+.hm-explain {
+  font-size: 0.72rem; color: var(--low); font-weight: 300; line-height: 1.55;
+  margin-top: 6px;
+}
+input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; height: 4px; }
+input[type=number] {
+  width: 100%; background: var(--s1); border: 1px solid var(--border);
+  border-radius: var(--r-sm); color: var(--text); font-family: var(--mono);
+  font-size: 0.75rem; padding: 7px 11px; outline: none; transition: border-color 0.18s;
+  -moz-appearance: textfield;
+}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+input[type=number]:focus { border-color: rgba(99,130,255,0.4); }
+
+/* ── WAVE ── */
+.wave-strip {
+  height: 48px; background: var(--s2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); overflow: hidden; margin-top: 1rem;
+}
+canvas#waveCanvas { width: 100%; height: 100%; display: block; }
+
+/* ── BTN ── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 18px; border-radius: var(--r-sm); border: none;
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 500;
+  letter-spacing: 0.04em; cursor: pointer; transition: all 0.17s;
+}
+.btn-full { width: 100%; margin-top: 1rem; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.25; cursor: not-allowed; transform: none; }
+.btn-ghost { background: transparent; color: var(--mid); border: 1px solid var(--border-hi); }
+.btn-ghost:hover { color: var(--text); border-color: var(--mid); }
+.btn-ghost:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-teal { background: rgba(52,211,153,0.1); color: var(--teal); border: 1px solid rgba(52,211,153,0.18); }
+.btn-teal:hover { background: rgba(52,211,153,0.18); }
+.btn-gold { background: rgba(251,191,36,0.1); color: var(--gold); border: 1px solid rgba(251,191,36,0.18); }
+.btn-gold:hover { background: rgba(251,191,36,0.18); }
+.btn-sm { padding: 5px 10px; font-size: 0.62rem; }
+
+/* ── STATUS ── */
+.status {
+  display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
+  border-radius: var(--r-sm); margin-top: 1rem;
+  font-family: var(--mono); font-size: 0.66rem; line-height: 1.6;
+}
+.status.loading { background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.18); color: var(--gold); }
+.status.ok      { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.18); color: var(--teal); }
+.status.err     { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.18); color: var(--rose); }
+.status.quiet   { background: var(--s2); border: 1px solid var(--border); color: var(--low); }
+.status-icon    { flex-shrink: 0; margin-top: 1px; }
+.status-body    { flex: 1; }
+.status-tip {
+  margin-top: 6px; padding: 6px 10px;
+  background: rgba(248,113,113,0.06); border: 1px solid rgba(248,113,113,0.12);
+  border-radius: 4px; font-size: 0.6rem; color: rgba(255,255,255,0.35);
+  line-height: 1.7;
+}
+.status-tip a { color: var(--accent); text-decoration: none; }
+.status-tip a:hover { text-decoration: underline; }
+.spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--gold); animation: spin 0.7s linear infinite; flex-shrink: 0; }
+
+/* ── ANALYSIS ── */
+#analysis { display: none; }
+#analysis.show { display: block; }
+
+/* ── STATS ── */
+.stats { display: grid; grid-template-columns: repeat(2,1fr); gap: 8px; margin-bottom: 12px; }
+.stat {
+  background: var(--s1); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 1rem 1.1rem;
+}
+.stat-num {
+  font-family: var(--head);
+  font-size: 2.4rem; font-weight: 400;
+  display: block; margin-bottom: 2px; line-height: 1;
+  letter-spacing: 0.03em;
+}
+.stat-lbl { font-family: var(--mono); font-size: 0.54rem; color: var(--low); text-transform: uppercase; letter-spacing: 0.1em; }
+.c-accent { color: var(--accent); }
+.c-teal   { color: var(--teal);   }
+.c-gold   { color: var(--gold);   }
+.c-v      { color: var(--accent2);}
+
+/* ── TIMELINE ── */
+.tl-track {
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); height: 30px; position: relative; overflow: hidden;
+  margin-bottom: 5px;
+}
+.tl-seg { position: absolute; height: 100%; top: 0; border-radius: 2px; opacity: 0.7; transition: opacity 0.15s; }
+.tl-seg:hover { opacity: 1; }
+.tl-marks {
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); font-size: 0.54rem; color: var(--low); margin-bottom: 1rem;
+}
+.hm-row { display: flex; gap: 3px; flex-wrap: wrap; }
+.hm-cell {
+  width: 18px; height: 18px; border-radius: 3px; cursor: default;
+  transition: transform 0.12s;
+}
+.hm-cell:hover { transform: scale(1.4); z-index: 5; position: relative; }
+
+/* ── CHARTS ── */
+.chart-col { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.chart-card { background: var(--s1); border: 1px solid var(--border); border-radius: var(--r); padding: 1.1rem; }
+.chart-title { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text); margin-bottom: 2px; }
+.chart-desc { font-size: 0.75rem; color: var(--low); margin-bottom: 0.75rem; line-height: 1.4; font-weight: 300; }
+canvas.chart { width: 100% !important; height: 130px !important; }
+
+/* ── PLAYER ── */
+.player {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 10px 13px;
+}
+.play-btn {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: rgba(99,130,255,0.1); border: 1px solid rgba(99,130,255,0.2);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.18s;
+}
+.play-btn:hover { background: rgba(99,130,255,0.22); }
+.play-btn svg { fill: var(--accent); }
+.prog { flex: 1; }
+.prog-track { height: 2px; background: var(--border-hi); border-radius: 2px; cursor: pointer; margin-bottom: 4px; overflow: hidden; }
+.prog-fill { height: 100%; border-radius: 2px; width: 0%; transition: width 0.1s linear; }
+.prog-times { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.55rem; color: var(--low); }
+
+/* ── PREVIEW CARD ── */
+.preview-card { background: var(--s2); border: 1px solid rgba(99,130,255,0.12); border-radius: var(--r); padding: 1rem; margin-top: 1rem; }
+.preview-title { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 0.75rem; }
+audio { width: 100%; border-radius: var(--r-sm); }
+
+/* ── SEGMENTS ── */
+.seg-list { display: flex; flex-direction: column; gap: 6px; }
+.seg-item { background: var(--s2); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; animation: rise 0.28s ease both; }
+.seg-main { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+.seg-n { font-family: var(--mono); font-size: 0.58rem; color: var(--low); min-width: 22px; }
+.seg-bar-area { flex: 1; }
+.seg-bg { height: 2px; background: var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 5px; }
+.seg-fill { height: 100%; border-radius: 2px; transition: width 0.7s cubic-bezier(.16,1,.3,1); }
+.seg-times { font-family: var(--mono); font-size: 0.58rem; color: var(--low); display: flex; gap: 5px; }
+.seg-times span { color: var(--mid); }
+.seg-dur { font-family: var(--mono); font-size: 0.72rem; min-width: 42px; text-align: right; }
+.seg-actions { display: flex; gap: 5px; }
+.seg-exp { border-top: 1px solid var(--border); padding: 9px 14px 10px; display: none; }
+.seg-exp.open { display: block; }
+
+/* ── HOW IT WORKS ── */
+.how-list { display: flex; flex-direction: column; gap: 8px; }
+.how-card { background: var(--s1); border: 1px solid var(--border); border-radius: var(--r); padding: 1rem; display: flex; gap: 1rem; align-items: flex-start; }
+.how-num {
+  font-family: var(--mono); font-size: 0.6rem; color: var(--accent);
+  flex-shrink: 0; padding-top: 2px;
+}
+.how-card h3 { font-family: var(--head); font-size: 1.1rem; font-weight: 400; margin-bottom: 3px; letter-spacing: 0.04em; text-transform: uppercase; }
+.how-card p { font-size: 0.78rem; color: var(--mid); line-height: 1.65; font-weight: 300; }
+
+/* ── FOOTER ── */
+footer {
+  border-top: 1px solid var(--border); padding: 1.25rem 0;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 1rem; margin-top: 2rem;
+}
+.footer-l { font-family: var(--mono); font-size: 0.58rem; color: var(--low); }
+.footer-links { display: flex; gap: 1.25rem; }
+.footer-links a { font-family: var(--mono); font-size: 0.58rem; color: var(--low); text-decoration: none; transition: color 0.18s; }
+.footer-links a:hover { color: var(--accent); }
+
+/* ── ANIMATIONS ── */
+@keyframes pulse    { 0%,100%{box-shadow:0 0 0 0 rgba(99,130,255,0.5)} 50%{box-shadow:0 0 0 6px rgba(99,130,255,0)} }
+@keyframes blink    { 0%,100%{opacity:1} 50%{opacity:0.1} }
+@keyframes spin     { to{transform:rotate(360deg)} }
+@keyframes ring-out { 0%,100%{transform:scale(1);opacity:0.5} 50%{transform:scale(1.45);opacity:0} }
+@keyframes rise     { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+<!-- NAV -->
+<nav>
+  <div class="logo"><div class="logo-dot"></div>VoxSplit</div>
+  <div class="nav-tag">Neural VAD</div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="kicker">Voice Activity Detection</div>
+  <h1>Split speech<br><span class="dim">from silence.</span></h1>
+  <p class="hero-desc">
+    Upload any audio or record from your microphone. VoxSplit uses a
+    <b>trained neural network</b> to find every spoken moment,
+    strip silence, and let you preview or download each segment.
+  </p>
+
+  <!-- signal monitor -->
+  <div class="monitor">
+    <div class="monitor-head">
+      <div class="monitor-lbl">Signal Monitor</div>
+      <div class="monitor-live"><div class="live-dot"></div>LIVE</div>
+    </div>
+    <canvas id="oscCanvas" width="600" height="40"></canvas>
+  </div>
+</section>
+
+<!-- INPUT -->
+<div class="sec-head"><span class="sec-num">01</span><span class="sec-title">Audio Input</span></div>
+<div class="card">
+
+  <div class="tabs">
+    <button class="tab active" id="tab-upload" onclick="switchTab('upload')">
+      <span class="tab-dot" style="background:var(--teal)"></span>Upload File
+    </button>
+    <button class="tab" id="tab-record" onclick="switchTab('record')">
+      <span class="tab-dot" style="background:var(--rose)"></span>Record Mic
+    </button>
+  </div>
+
+  <!-- UPLOAD -->
+  <div class="tab-panel active" id="panel-upload">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="audioFile" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus,.webm">
+      <div class="drop-icon">
+        <svg viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3"/></svg>
+      </div>
+      <div class="drop-main">Drop audio here or click to browse</div>
+      <div class="drop-sub">WAV · MP3 · FLAC · OGG · M4A · AAC · WebM — any length</div>
+      <div id="file-chip">📎 <span id="chip-name"></span></div>
+    </div>
+    <div id="upload-preview" style="display:none">
+      <div class="preview-card">
+        <div class="preview-title">📁 Uploaded File</div>
+        <audio id="upload-audio" controls></audio>
+      </div>
+    </div>
+  </div>
+
+  <!-- RECORD -->
+  <div class="tab-panel" id="panel-record">
+    <div class="rec-wrap">
+      <div class="rec-center">
+        <div class="rec-ring">
+          <div class="rec-ring-anim" id="recRing"></div>
+          <button class="rec-btn" id="recBtn" onclick="toggleRecord()">
+            <div class="rec-shape" id="recIcon"></div>
+          </button>
+        </div>
+        <div class="rec-info">
+          <div class="rec-timer" id="recTimer">0:00</div>
+          <div class="rec-hint" id="recStatusText">Click to start</div>
+        </div>
+      </div>
+      <div class="rec-wave-box">
+        <canvas id="recCanvas" height="48"></canvas>
+      </div>
+      <div class="rec-btns">
+        <button class="btn btn-ghost btn-sm" id="recDiscardBtn" onclick="discardRecording()" style="display:none">✕ Discard</button>
+        <button class="btn btn-teal btn-sm" id="recUseBtn" onclick="useRecording()" style="display:none">✓ Use Recording</button>
+      </div>
+      <div id="rec-preview-wrap"></div>
+    </div>
+  </div>
+
+  <!-- ADVANCED PARAMS (collapsed by default) -->
+  <button class="adv-toggle" id="advToggle" onclick="toggleAdv()">
+    ⚙ Advanced Settings
+    <span class="chevron">▾</span>
+  </button>
+  <div class="adv-body" id="advBody">
+    <div class="param-block">
+      <div class="param-label">Speech Sensitivity <span class="param-val" id="thresh-val">0.50</span></div>
+      <input type="range" id="thresh" min="0.1" max="0.9" step="0.05" value="0.5">
+      <div class="param-hint">Controls how confident the model must be to call a chunk "speech". <b style="color:var(--mid)">Lower</b> = picks up quiet or distant voices. <b style="color:var(--mid)">Higher</b> = only counts loud, clear speech. Default 0.5 works for most recordings.</div>
+    </div>
+    <div class="param-block">
+      <div class="param-label">Min Silence Gap <span class="param-val">ms</span></div>
+      <input type="number" id="gap" min="50" max="2000" step="50" value="300" placeholder="300">
+      <div class="param-hint">How long a pause must be before it splits into a new segment. <b style="color:var(--mid)">300 ms</b> is good for natural speech. Raise it (e.g. 800 ms) to merge nearby phrases into fewer, longer segments.</div>
+    </div>
+  </div>
+
+  <div class="wave-strip">
+    <canvas id="waveCanvas" height="48"></canvas>
+  </div>
+
+  <button class="btn btn-primary btn-full" id="runBtn" onclick="runAnalysis()">
+    Detect Speech →
+  </button>
+
+  <div id="status-wrap"></div>
+</div>
+
+<!-- ANALYSIS -->
+<div id="analysis">
+
+  <div class="sec-head" style="margin-top:1.5rem"><span class="sec-num">02</span><span class="sec-title">Overview</span></div>
+  <div class="stats">
+    <div class="stat"><span class="stat-num c-accent" id="st-segs">—</span><span class="stat-lbl">Segments</span></div>
+    <div class="stat"><span class="stat-num c-teal"   id="st-speech">—</span><span class="stat-lbl">Speech (s)</span></div>
+    <div class="stat"><span class="stat-num c-gold"   id="st-sil">—</span><span class="stat-lbl">Silence cut</span></div>
+    <div class="stat"><span class="stat-num c-v"      id="st-ratio">—</span><span class="stat-lbl">Speech ratio</span></div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="sec-head"><span class="sec-num">03</span><span class="sec-title">Timeline</span></div>
+  <div class="card" style="padding:1rem;margin-bottom:10px">
+    <div class="tl-track" id="timeline"></div>
+    <div class="tl-marks">
+      <span>0s</span><span id="tl-mid"></span><span id="tl-end"></span>
+    </div>
+    <div style="font-family:var(--mono);font-size:0.56rem;color:var(--low);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px">Segment length heatmap</div>
+    <div class="hm-row" id="heatmap"></div>
+    <div class="hm-legend">
+      <span>Short</span>
+      <div class="hm-legend-bar"></div>
+      <span>Long</span>
+    </div>
+    <div class="hm-explain">Each square = one speech segment. Darker blue = longer segment. Hover any square to see its duration. Helps you spot which parts of your recording had the most sustained speech.</div>
+  </div>
+
+  <!-- Charts -->
+  <div class="chart-col">
+    <div class="chart-card">
+      <div class="chart-title">Segment Durations</div>
+      <div class="chart-desc">How long each detected speech segment is, in seconds.</div>
+      <canvas id="barChart" class="chart"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Speech vs Silence</div>
+      <div class="chart-desc">What fraction of the total recording was speech vs silence.</div>
+      <canvas id="donutChart" class="chart"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Cumulative Speech</div>
+      <div class="chart-desc">Total seconds of speech accumulated as the recording plays out.</div>
+      <canvas id="lineChart" class="chart"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Silence Gaps</div>
+      <div class="chart-desc">How long each silence gap was between consecutive speech segments.</div>
+      <canvas id="gapChart" class="chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Trimmed -->
+  <div class="sec-head"><span class="sec-num">04</span><span class="sec-title">Trimmed Output</span></div>
+  <div class="card" style="margin-bottom:10px">
+    <div style="font-size:0.82rem;font-weight:500;margin-bottom:4px">Silence-stripped audio</div>
+    <div style="font-size:0.74rem;color:var(--low);font-weight:300;margin-bottom:1rem">All speech segments joined end-to-end, silences removed.</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="btn btn-teal btn-sm" id="loadTrimBtn" onclick="loadTrimmed()">▶ Preview</button>
+      <button class="btn btn-gold btn-sm" onclick="dlTrimmed()">↓ Download WAV</button>
+    </div>
+    <div id="trim-player"></div>
+  </div>
+
+  <!-- Segments -->
+  <div class="sec-head"><span class="sec-num">05</span><span class="sec-title">Speech Segments <span id="seg-count" style="font-size:0.7rem;color:var(--low)"></span></span></div>
+  <div class="card" style="padding:0.85rem">
+    <div class="seg-list" id="seg-list"></div>
+  </div>
+
+</div>
+
+<!-- HOW IT WORKS -->
+<div class="divider"></div>
+<div class="sec-head" style="margin-top:1.5rem"><span class="sec-title">How It Works</span></div>
+<div class="how-list" style="margin-bottom:2rem">
+  <div class="how-card"><div class="how-num">01</div><div><h3>Decode &amp; Normalise</h3><p>torchaudio reads your file in any format and converts it to 16 kHz mono — the exact input the model needs. WebM/Opus from the recorder is converted via ffmpeg before processing.</p></div></div>
+  <div class="how-card"><div class="how-num">02</div><div><h3>Neural Scoring</h3><p>Silero VAD, a lightweight recurrent network, scores every 30 ms chunk with a probability that it contains human speech.</p></div></div>
+  <div class="how-card"><div class="how-num">03</div><div><h3>Boundary Detection</h3><p>Chunks above your sensitivity threshold are merged into segments. The silence gap controls how short pauses between words are handled.</p></div></div>
+  <div class="how-card"><div class="how-num">04</div><div><h3>Preview &amp; Export</h3><p>Stream each segment in-browser or download the full silence-stripped file and individual clips as WAV.</p></div></div>
+</div>
+
+<footer>
+  <div class="footer-l">VoxSplit · Silero VAD + PyTorch + Flask</div>
+  <div class="footer-links">
+    <a href="https://github.com/snakers4/silero-vad" target="_blank">Silero VAD ↗</a>
+    <a href="https://pytorch.org" target="_blank">PyTorch ↗</a>
+  </div>
+</footer>
+
+</div><!-- /page -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+// ── OSC ──────────────────────────────────────────────────────────────
+const osc = document.getElementById('oscCanvas'), octx = osc.getContext('2d');
+let oscBuf = Array(120).fill(0.5), oscPh = 0, oscActive = false;
+function drawOsc() {
+  const W = osc.width, H = osc.height;
+  octx.clearRect(0,0,W,H);
+  octx.strokeStyle = 'rgba(99,130,255,0.5)'; octx.lineWidth = 1.4;
+  octx.shadowColor = '#6382ff'; octx.shadowBlur = 6;
+  octx.beginPath();
+  oscBuf.forEach((v,i) => {
+    const x = i/(oscBuf.length-1)*W, y = (1-v)*H*0.76+H*0.12;
+    i===0 ? octx.moveTo(x,y) : octx.lineTo(x,y);
+  });
+  octx.stroke(); octx.shadowBlur = 0;
+}
+function tickOsc() {
+  oscPh += 0.07;
+  const v = oscActive
+    ? 0.5 + 0.44*Math.sin(oscPh*3.1)*(0.35+Math.random()*0.65)
+    : 0.5 + 0.022*Math.sin(oscPh);
+  oscBuf.shift(); oscBuf.push(v); drawOsc();
+  requestAnimationFrame(tickOsc);
+}
+tickOsc();
+
+// ── WAVE STRIP ────────────────────────────────────────────────────────
+const waveEl = document.getElementById('waveCanvas'), wctx = waveEl.getContext('2d');
+let wSegs = [], wDur = 0;
+function drawWave(segs, total) {
+  const W = waveEl.offsetWidth || 600, H = 48;
+  waveEl.width = W; waveEl.height = H;
+  wctx.clearRect(0,0,W,H);
+  const mid = H/2;
+  wctx.strokeStyle = 'rgba(255,255,255,0.04)'; wctx.lineWidth = 1;
+  wctx.beginPath(); wctx.moveTo(0,mid); wctx.lineTo(W,mid); wctx.stroke();
+  if (!segs || !segs.length) return;
+  segs.forEach(s => {
+    const x1 = s.start/total*W, x2 = s.end/total*W, bw = Math.max(1.5,x2-x1);
+    const g = wctx.createLinearGradient(x1,0,x1,H);
+    g.addColorStop(0,'rgba(99,130,255,0)');
+    g.addColorStop(0.5,'rgba(99,130,255,0.1)');
+    g.addColorStop(1,'rgba(99,130,255,0)');
+    wctx.fillStyle = g; wctx.fillRect(x1,0,bw,H);
+    const bars = Math.max(2, Math.floor(bw/3));
+    for (let b=0; b<bars; b++) {
+      const bx = x1+(b/bars)*bw+0.6, bh = 3+Math.random()*H*0.5;
+      wctx.fillStyle = 'rgba(99,130,255,0.55)';
+      wctx.fillRect(bx, mid-bh/2, 1.4, bh);
+    }
+  });
+  wSegs = segs; wDur = total;
+}
+let loadAnim = null;
+function animateLoading() {
+  const W = waveEl.offsetWidth||600, H = 48; let ph = 0;
+  waveEl.width = W; waveEl.height = H;
+  return setInterval(() => {
+    wctx.clearRect(0,0,W,H);
+    wctx.strokeStyle = 'rgba(251,191,36,0.4)'; wctx.lineWidth = 1.4;
+    wctx.beginPath();
+    for (let x=0; x<W; x++) {
+      const t = x/W*8*Math.PI+ph, y = H/2+Math.sin(t)*10*Math.sin(x/W*Math.PI);
+      x===0 ? wctx.moveTo(x,y) : wctx.lineTo(x,y);
+    }
+    wctx.stroke(); ph += 0.09;
+  }, 28);
+}
+drawWave([],1);
+
+// ── ADVANCED TOGGLE ───────────────────────────────────────────────────
+function toggleAdv() {
+  const btn = document.getElementById('advToggle');
+  const body = document.getElementById('advBody');
+  btn.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+// ── SLIDER ────────────────────────────────────────────────────────────
+document.getElementById('thresh').oninput = e =>
+  document.getElementById('thresh-val').textContent = parseFloat(e.target.value).toFixed(2);
+
+// ── TABS ──────────────────────────────────────────────────────────────
+function switchTab(t) {
+  ['upload','record'].forEach(id => {
+    document.getElementById('panel-'+id).classList.toggle('active', id===t);
+    document.getElementById('tab-'+id).classList.toggle('active', id===t);
+  });
+}
+
+// ── FILE INPUT ────────────────────────────────────────────────────────
+let cachedFile = null;
+const dropZone = document.getElementById('dropZone'), fileInput = document.getElementById('audioFile');
+function setFile(f) {
+  cachedFile = f;
+  document.getElementById('chip-name').textContent = f.name;
+  document.getElementById('file-chip').style.display = 'inline-flex';
+  document.getElementById('status-wrap').innerHTML = '';
+  document.getElementById('analysis').classList.remove('show');
+  drawWave([],1);
+  const url = URL.createObjectURL(f);
+  document.getElementById('upload-audio').src = url;
+  document.getElementById('upload-preview').style.display = 'block';
+}
+fileInput.onchange = () => fileInput.files[0] && setFile(fileInput.files[0]);
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('over'); e.dataTransfer.files[0] && setFile(e.dataTransfer.files[0]); });
+
+// ── WAV ENCODER (browser-side, no ffmpeg needed) ──────────────────────
+function encodeWAV(samples, sampleRate) {
+  // samples: Float32Array, mono, at sampleRate
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buf);
+  const write = (off, str) => { for (let i=0;i<str.length;i++) view.setUint8(off+i, str.charCodeAt(i)); };
+  write(0, 'RIFF');
+  view.setUint32(4,  36 + samples.length * 2, true);
+  write(8, 'WAVE'); write(12, 'fmt ');
+  view.setUint32(16, 16, true);       // PCM chunk size
+  view.setUint16(20, 1, true);        // PCM format
+  view.setUint16(22, 1, true);        // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);  // byte rate
+  view.setUint16(32, 2, true);        // block align
+  view.setUint16(34, 16, true);       // bits per sample
+  write(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  // clamp & write int16
+  let off = 44;
+  for (let i = 0; i < samples.length; i++, off += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+// ── RECORDER ──────────────────────────────────────────────────────────
+// Records via ScriptProcessor / AudioWorklet at the AudioContext's native
+// sample rate, then encodes to WAV in the browser — no ffmpeg required.
+let recStream=null, recTimerInt=null, recSecs=0, recBlob=null;
+let recAnalyser=null, recAnimId=null, recAudioCtx=null;
+let recProcessor=null, recSamples=[];   // raw PCM accumulator
+let recActive = false;
+
+function toggleRecord() {
+  if (!recActive) startRecording(); else stopRecording();
+}
+
+async function startRecording() {
+  try { recStream = await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch { document.getElementById('recStatusText').textContent='Mic denied'; return; }
+
+  recActive = true; recSamples = []; recSecs = 0;
+
+  recAudioCtx = new AudioContext();
+  const src = recAudioCtx.createMediaStreamSource(recStream);
+
+  // Analyser for waveform visualisation
+  recAnalyser = recAudioCtx.createAnalyser(); recAnalyser.fftSize = 256;
+  src.connect(recAnalyser);
+
+  // ScriptProcessor to capture raw PCM (widely supported)
+  recProcessor = recAudioCtx.createScriptProcessor(4096, 1, 1);
+  recProcessor.onaudioprocess = e => {
+    if (!recActive) return;
+    // copy the Float32Array (it's reused by the browser after the callback)
+    recSamples.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  };
+  src.connect(recProcessor);
+  recProcessor.connect(recAudioCtx.destination);  // must be connected
+
+  document.getElementById('recBtn').classList.add('recording');
+  document.getElementById('recRing').classList.add('pulsing');
+  document.getElementById('recStatusText').textContent = 'Recording…';
+  recTimerInt = setInterval(() => {
+    recSecs++;
+    const m = Math.floor(recSecs/60), s = recSecs%60;
+    document.getElementById('recTimer').textContent = m+':'+(s<10?'0'+s:s);
+  }, 1000);
+  drawRecWave();
+}
+
+function stopRecording() {
+  recActive = false;
+  recStream && recStream.getTracks().forEach(t => t.stop());
+  clearInterval(recTimerInt); cancelAnimationFrame(recAnimId);
+
+  // Disconnect processor to stop capturing
+  if (recProcessor) { recProcessor.disconnect(); recProcessor = null; }
+
+  document.getElementById('recBtn').classList.remove('recording');
+  document.getElementById('recRing').classList.remove('pulsing');
+  document.getElementById('recStatusText').textContent = 'Encoding…';
+
+  // Merge all chunks into one Float32Array
+  const totalLen = recSamples.reduce((a, b) => a + b.length, 0);
+  const merged = new Float32Array(totalLen);
+  let offset = 0;
+  for (const chunk of recSamples) { merged.set(chunk, offset); offset += chunk.length; }
+
+  // Encode to WAV at the native AudioContext sample rate
+  recBlob = encodeWAV(merged, recAudioCtx.sampleRate);
+
+  const url = URL.createObjectURL(recBlob);
+  const wrap = document.getElementById('rec-preview-wrap');
+  wrap.innerHTML = '<div class="preview-card"><div class="preview-title">🎙 Recording Preview</div><audio controls></audio></div>';
+  wrap.querySelector('audio').src = url;
+  document.getElementById('recUseBtn').style.display = 'inline-flex';
+  document.getElementById('recDiscardBtn').style.display = 'inline-flex';
+  document.getElementById('recStatusText').textContent = 'Done';
+}
+
+function drawRecWave() {
+  const cv = document.getElementById('recCanvas'), ctx = cv.getContext('2d');
+  cv.width = cv.offsetWidth||600; cv.height = 48;
+  const buf = new Uint8Array(recAnalyser.frequencyBinCount);
+  function frame() {
+    if (!recActive) return;
+    recAnimId = requestAnimationFrame(frame);
+    recAnalyser.getByteTimeDomainData(buf);
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.strokeStyle = 'rgba(248,113,113,0.7)'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    buf.forEach((v,i) => {
+      const x=i/buf.length*cv.width, y=(v/128-1)*cv.height*0.4+cv.height/2;
+      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  }
+  frame();
+}
+
+function discardRecording() {
+  recBlob=null; cachedFile=null;
+  document.getElementById('rec-preview-wrap').innerHTML='';
+  document.getElementById('recUseBtn').style.display='none';
+  document.getElementById('recDiscardBtn').style.display='none';
+  document.getElementById('recTimer').textContent='0:00';
+  document.getElementById('recStatusText').textContent='Click to start';
+  const cv=document.getElementById('recCanvas');
+  cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
+}
+
+function useRecording() {
+  if (!recBlob) return;
+  cachedFile = new File([recBlob], 'recording.wav', {type:'audio/wav'});
+  document.getElementById('status-wrap').innerHTML='';
+  document.getElementById('analysis').classList.remove('show');
+  drawWave([],1);
+  setStatus('ok','Recording ready — click Detect Speech to analyse.');
+  switchTab('upload');
+  document.getElementById('chip-name').textContent='recording.wav';
+  document.getElementById('file-chip').style.display='inline-flex';
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────
+const fmt = s => { const m=Math.floor(s/60), r=(s%60).toFixed(1); return m>0?`${m}:${r.padStart(4,'0')}`:`${r}s`; };
+
+function fd(extra={}) {
+  const f = new FormData();
+  f.append('file', cachedFile);
+  f.append('threshold', document.getElementById('thresh').value);
+  f.append('min_silence_duration_ms', document.getElementById('gap').value || 300);
+  for (const [k,v] of Object.entries(extra)) f.append(k,v);
+  return f;
+}
+
+function b64DL(b64, name) {
+  const bytes=atob(b64), ab=new ArrayBuffer(bytes.length), ua=new Uint8Array(ab);
+  for (let i=0;i<bytes.length;i++) ua[i]=bytes.charCodeAt(i);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([ab],{type:'audio/wav'}));
+  a.download=name; a.click();
+}
+
+function buildPlayer(b64, color='var(--accent)') {
+  const audio = new Audio('data:audio/wav;base64,'+b64);
+  const id = 'pl'+Math.random().toString(36).slice(2);
+  const div = document.createElement('div'); div.className='player';
+  div.innerHTML=`<div class="play-btn" id="${id}b"><svg width="10" height="10" viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg></div><div class="prog"><div class="prog-track"><div class="prog-fill" id="${id}f" style="background:${color}"></div></div><div class="prog-times"><span id="${id}c">0.0s</span><span id="${id}t">—</span></div></div>`;
+  const btn=div.querySelector(`#${id}b`),fill=div.querySelector(`#${id}f`),ct=div.querySelector(`#${id}c`),tt=div.querySelector(`#${id}t`);
+  const PLAY='<svg width="10" height="10" viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg>';
+  const PAUSE='<svg width="10" height="10" viewBox="0 0 16 16"><rect x="3" y="2" width="3.5" height="12"/><rect x="9.5" y="2" width="3.5" height="12"/></svg>';
+  audio.onloadedmetadata = () => tt.textContent=fmt(audio.duration);
+  audio.ontimeupdate = () => { fill.style.width=(audio.currentTime/audio.duration*100)+'%'; ct.textContent=fmt(audio.currentTime); };
+  audio.onended = () => { btn.innerHTML=PLAY; fill.style.width='0%'; ct.textContent='0.0s'; };
+  btn.onclick = () => { if(audio.paused){audio.play();btn.innerHTML=PAUSE;}else{audio.pause();btn.innerHTML=PLAY;} };
+  return div;
+}
+
+// ── CHARTS ────────────────────────────────────────────────────────────
+const CC = { g:'rgba(255,255,255,0.04)', t:'rgba(255,255,255,0.26)', mono:'DM Mono' };
+const baseOpts = {
+  responsive:true, maintainAspectRatio:false,
+  plugins:{legend:{display:false}},
+  scales:{
+    x:{grid:{color:CC.g},ticks:{color:CC.t,font:{family:CC.mono,size:9}}},
+    y:{grid:{color:CC.g},ticks:{color:CC.t,font:{family:CC.mono,size:9}}}
+  }
+};
+let charts = {};
+function destroyCharts() { Object.values(charts).forEach(c=>{try{c.destroy()}catch{}}); charts={}; }
+function buildCharts(data) {
+  destroyCharts();
+  const segs=data.segments, labels=segs.map((_,i)=>`S${i+1}`), durs=segs.map(s=>s.duration);
+  const gaps=segs.slice(1).map((s,i)=>+(s.start-segs[i].end).toFixed(2));
+  const opts = JSON.parse(JSON.stringify(baseOpts));
+  charts.bar = new Chart(document.getElementById('barChart'),{type:'bar',data:{labels,datasets:[{data:durs,backgroundColor:'rgba(99,130,255,0.35)',borderColor:'rgba(99,130,255,0.8)',borderWidth:1,borderRadius:4}]},options:{...opts}});
+  charts.donut = new Chart(document.getElementById('donutChart'),{type:'doughnut',data:{labels:['Speech','Silence'],datasets:[{data:[data.total_speech,data.silence_removed],backgroundColor:['rgba(52,211,153,0.65)','rgba(251,191,36,0.3)'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,cutout:'68%',plugins:{legend:{display:true,position:'bottom',labels:{color:CC.t,font:{family:CC.mono,size:9},boxWidth:8,padding:8}}}}});
+  const cx=[],cy=[]; let rs=0;
+  segs.forEach(s=>{cx.push(s.start.toFixed(1));cy.push(+rs.toFixed(2));rs+=s.duration;cx.push(s.end.toFixed(1));cy.push(+rs.toFixed(2));});
+  charts.line = new Chart(document.getElementById('lineChart'),{type:'line',data:{labels:cx,datasets:[{data:cy,borderColor:'rgba(99,130,255,0.8)',backgroundColor:'rgba(99,130,255,0.07)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.4}]},options:{...opts}});
+  charts.gap = new Chart(document.getElementById('gapChart'),{type:'bar',data:{labels:gaps.map((_,i)=>`G${i+1}`),datasets:[{data:gaps,backgroundColor:'rgba(167,139,250,0.35)',borderColor:'rgba(167,139,250,0.8)',borderWidth:1,borderRadius:4}]},options:{...opts}});
+}
+
+// ── TIMELINE ──────────────────────────────────────────────────────────
+const TLC=['rgba(99,130,255','rgba(52,211,153','rgba(167,139,250','rgba(251,191,36','rgba(248,113,113'];
+function buildTimeline(segs, total) {
+  const tl = document.getElementById('timeline'); tl.innerHTML='';
+  segs.forEach((s,i) => {
+    const d=document.createElement('div'); d.className='tl-seg';
+    d.style.cssText=`left:${s.start/total*100}%;width:${(s.end-s.start)/total*100}%;background:${TLC[i%TLC.length]},0.6)`;
+    d.title=`Seg ${i+1}: ${s.start}s → ${s.end}s (${s.duration}s)`;
+    tl.appendChild(d);
+  });
+  document.getElementById('tl-mid').textContent=(total/2).toFixed(1)+'s';
+  document.getElementById('tl-end').textContent=total+'s';
+}
+function buildHeatmap(segs) {
+  const hm=document.getElementById('heatmap'); hm.innerHTML='';
+  const mx=Math.max(...segs.map(s=>s.duration));
+  segs.forEach((s,i) => {
+    const r=s.duration/mx, cell=document.createElement('div'); cell.className='hm-cell';
+    cell.style.background=`rgba(99,130,255,${0.15+r*0.75})`;
+    cell.title=`Seg ${i+1}: ${s.duration}s`; hm.appendChild(cell);
+  });
+}
+
+// ── SEGMENTS ──────────────────────────────────────────────────────────
+function buildSegments(segs) {
+  const maxD = Math.max(...segs.map(s=>s.duration));
+  document.getElementById('seg-count').textContent=`(${segs.length})`;
+  const list=document.getElementById('seg-list'); list.innerHTML='';
+  segs.forEach((s,i) => {
+    const pct=Math.round(s.duration/maxD*100), col=TLC[i%TLC.length]+',0.8)';
+    const el=document.createElement('div'); el.className='seg-item';
+    el.style.animationDelay=(i*0.025)+'s';
+    el.innerHTML=`<div class="seg-main"><div class="seg-n">${String(i+1).padStart(2,'0')}</div><div class="seg-bar-area"><div class="seg-bg"><div class="seg-fill" data-pct="${pct}" style="width:0%;background:${col}"></div></div><div class="seg-times"><span>${s.start}s</span>→<span>${s.end}s</span>·<span>${s.duration}s</span></div></div><div class="seg-dur" style="color:${col}">${s.duration}s</div><div class="seg-actions"><button class="btn btn-ghost btn-sm" onclick="playSeg(${i})">▶</button><button class="btn btn-teal btn-sm" onclick="dlSeg(${i})">↓</button></div></div><div class="seg-exp" id="sp-${i}"></div>`;
+    list.appendChild(el);
+  });
+  requestAnimationFrame(()=>document.querySelectorAll('.seg-fill').forEach(el=>el.style.width=el.dataset.pct+'%'));
+}
+
+// ── FFMPEG ERROR DETECTION ────────────────────────────────────────────
+function isffmpegError(msg) {
+  return msg && (msg.includes('ffmpeg') || msg.includes('WinError') || msg.includes('FileNotFoundError'));
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────
+async function runAnalysis() {
+  if (!cachedFile) { setStatus('err','Please select or record audio first.'); return; }
+  const btn=document.getElementById('runBtn');
+  btn.disabled=true; btn.textContent='Analysing…';
+  setStatus('loading','Running neural VAD…');
+  loadAnim=animateLoading(); oscActive=true;
+  try {
+    const res=await fetch('/predict',{method:'POST',body:fd()});
+    const data=await res.json();
+    clearInterval(loadAnim); oscActive=false;
+    btn.disabled=false; btn.textContent='Detect Speech →';
+    if (data.error) {
+      drawWave([],1);
+      setStatus('err', data.error, isffmpegError(data.error));
+      return;
+    }
+    if (!data.segments||!data.segments.length) { drawWave([],1); setStatus('quiet','No speech detected.'); return; }
+    setStatus('ok',`${data.count} segment${data.count!==1?'s':''} · ${data.total_speech}s speech · ${data.silence_removed}s silence removed`);
+    drawWave(data.segments,data.total_duration);
+    document.getElementById('st-segs').textContent=data.count;
+    document.getElementById('st-speech').textContent=data.total_speech;
+    document.getElementById('st-sil').textContent=data.silence_removed;
+    document.getElementById('st-ratio').textContent=Math.round(data.total_speech/data.total_duration*100)+'%';
+    buildTimeline(data.segments,data.total_duration);
+    buildHeatmap(data.segments);
+    buildCharts(data);
+    buildSegments(data.segments);
+    document.getElementById('trim-player').innerHTML='<p style="font-size:0.74rem;color:var(--low);font-weight:300">Click Preview to stream the trimmed audio.</p>';
+    trimB64=null;
+    document.getElementById('loadTrimBtn').disabled=false;
+    document.getElementById('loadTrimBtn').textContent='▶ Preview';
+    const sec=document.getElementById('analysis');
+    sec.classList.add('show');
+    sec.scrollIntoView({behavior:'smooth',block:'start'});
+  } catch {
+    clearInterval(loadAnim); oscActive=false;
+    btn.disabled=false; btn.textContent='Detect Speech →';
+    drawWave([],1);
+    setStatus('err','Cannot reach backend — is Flask running on localhost:5000?');
+  }
+}
+
+function setStatus(type, msg, showFfmpegTip=false) {
+  const icon={loading:'<div class="spin"></div>',ok:'✓',err:'✕',quiet:'—'}[type];
+  const tip = showFfmpegTip
+    ? `<div class="status-tip">
+        ffmpeg is required to process WebM/Opus recordings on Windows.<br>
+        1. Download from <a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank">gyan.dev/ffmpeg/builds</a> (get the "essentials" build)<br>
+        2. Extract and add the <code>bin/</code> folder to your system PATH<br>
+        3. Restart your terminal and Flask server, then try again.<br>
+        For WAV/MP3/FLAC files, ffmpeg is not needed.
+      </div>`
+    : '';
+  document.getElementById('status-wrap').innerHTML=
+    `<div class="status ${type}"><span class="status-icon">${icon}</span><div class="status-body">${msg}${tip}</div></div>`;
+}
+
+// ── TRIMMED ───────────────────────────────────────────────────────────
+let trimB64=null;
+async function loadTrimmed() {
+  const btn=document.getElementById('loadTrimBtn'); btn.disabled=true; btn.textContent='Loading…';
+  try {
+    const res=await fetch('/get_trimmed_audio',{method:'POST',body:fd()});
+    const data=await res.json();
+    if (data.error){
+      alert(data.error);
+      btn.disabled=false; btn.textContent='▶ Preview'; return;
+    }
+    trimB64=data.audio_b64;
+    const wrap=document.getElementById('trim-player'); wrap.innerHTML='';
+    wrap.appendChild(buildPlayer(trimB64,'var(--teal)'));
+    btn.style.display='none';
+  } catch { alert('Load failed.'); btn.disabled=false; btn.textContent='▶ Preview'; }
+}
+async function dlTrimmed() {
+  if (trimB64){b64DL(trimB64,'voxsplit_trimmed.wav');return;}
+  try {
+    const res=await fetch('/get_trimmed_audio',{method:'POST',body:fd()});
+    const data=await res.json();
+    if (data.error){alert(data.error);return;}
+    b64DL(data.audio_b64,'voxsplit_trimmed.wav');
+  } catch { alert('Download failed.'); }
+}
+
+// ── SEGMENT AUDIO ─────────────────────────────────────────────────────
+async function playSeg(idx) {
+  const el=document.getElementById('sp-'+idx);
+  if (el.classList.contains('open')){el.classList.remove('open');return;}
+  el.innerHTML='<span style="font-family:var(--mono);font-size:0.62rem;color:var(--low)">Loading…</span>';
+  el.classList.add('open');
+  try {
+    const res=await fetch('/get_segment_audio',{method:'POST',body:fd({index:idx})});
+    const data=await res.json();
+    if (data.error){el.innerHTML=`<span style="color:var(--rose);font-size:0.68rem">✕ ${data.error}</span>`;return;}
+    el.innerHTML=''; el.appendChild(buildPlayer(data.audio_b64));
+  } catch { el.innerHTML='<span style="color:var(--rose);font-size:0.68rem">✕ Load failed.</span>'; }
+}
+async function dlSeg(idx) {
+  try {
+    const res=await fetch('/get_segment_audio',{method:'POST',body:fd({index:idx})});
+    const data=await res.json();
+    if (data.error){alert(data.error);return;}
+    b64DL(data.audio_b64,`voxsplit_segment_${idx+1}.wav`);
+  } catch { alert('Download failed.'); }
+}
+
+window.addEventListener('resize', () => drawWave(wSegs,wDur));
+</script>
+</body>
+</html>
